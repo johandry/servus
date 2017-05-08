@@ -1,3 +1,18 @@
+## Project stuff to ignore
+# Binaries files
+/bin/
+/pkg/
+
+# Temporal files
+/tmp/
+
+## Ignore GO dependencies/vendors
+vendor/**/.git
+vendor/**/
+!vendor/vendor.json
+
+## GO stuff to ignore
+
 # Compiled Object files, Static and Dynamic libs (Shared Objects)
 *.o
 *.a
