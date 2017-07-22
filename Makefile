@@ -10,14 +10,14 @@
 # 		clean 		Remove all the created images.
 #     help			Display all the existing rules and description of what they do
 #     version   Shows the Servus version.
-# 		all 			Will do 'build' and 'run'
+# 		all 			Will build Servus in every different ways and run it
 #
 # Description: This Makefile is to create a container to build Servus and ship
 # it. It creates a cluster to use or test Servus
 # Use 'make help' to view all the options or go to
-# https://github.td.teradata.com/center-for-hadoop/presto-kube
+# https://github.com/johandry/servus
 #
-# Report Issues or create Pull Requests in https://github.td.teradata.com/center-for-hadoop/presto-kube
+# Report Issues or create Pull Requests in https://github.com/johandry/servus
 #===============================================================================
 
 ## Variables (Modify their values if needed):
@@ -42,7 +42,7 @@ PKG 					= pkg
 # Macros to set the application version, needed for the build:
 GIT_COMMIT		=	$(shell git rev-parse --short HEAD  2>/dev/null || echo 'unknown')
 GIT_DIRTY			= $(shell test -n "`git status --porcelain`" && echo "+CHANGES" || true)
-PKG_NAME   		= $(shell echo $(CURDIR) | rev | cut -f1 -d/ | rev)
+PKG_NAME   		= $(shell echo $(CURDIR) | rev | cut -f1 -d/ | rev | tr '[A-Z]' '[a-z]')
 PKG_BASE 			= $(shell dirname $$(go list .))
 
 VERSION 			= $(shell sed -n 's/^.*Version = "\(.*\)"$$/\1/p' version/latest.go)
@@ -56,6 +56,7 @@ LDFLAGS 			= -ldflags "\
 # Docker variables:
 DOCKER_IMG  	= $(PKG_NAME)
 DOCKER_CON  	= $(PKG_NAME)
+DOCKER_USR		= johandry
 
 # Output:
 NO_COLOR 		 ?= false
@@ -99,7 +100,7 @@ default: build
 
 # all is to execute the entire process to create a Presto AMI and a Presto
 # Cluster.
-all: clean build build-all image run
+all: clean build build-all build-image run
 
 # help to print all the commands and what they are for
 help:
@@ -111,7 +112,7 @@ help:
 
 # display the version of this project
 version:
-	@$(ECHO) "$(C_GREEN)Version:$(C_STD) v$(VERSION)-$(PRE_RELEASE) ($(GIT_COMMIT)$(GIT_DIRTY))"
+	@$(ECHO) "$(C_GREEN)Version:$(C_STD) v$(VERSION)-$(PRE_RELEASE) ($(GIT_COMMIT)$(GIT_DIRTY))$(C_STD)"
 
 ## Main Rules:
 ## -----------------------------------------------------------------------------
@@ -125,6 +126,43 @@ build: vendors test
 	@go build $(LDFLAGS) -o $(BINARY) && \
 		$(ECHO) "$(C_GREEN)$(I_CHECK) Build completed at $(C_YELLOW)$(BINARY)$(C_STD)" || \
 		$(ECHO) "$(C_RED)$(I_CROSS) Build failed$(C_STD)"
+
+# build Servus for every OS and Architecture. The binaries are located in
+# $(PKG)/v$(VERSION)
+build-all:
+	@$(ECHO) "$(C_GREEN)Building $(C_YELLOW)v$(VERSION)-$(PRE_RELEASE) ($(GIT_COMMIT)$(GIT_DIRTY))$(C_GREEN) for:$(C_STD)"
+	@for os in $(C_OS); do \
+		$(ECHO) " $(C_BLUE)$(I_BULLET)$(C_GREEN)  $${os}$(C_STD)"; \
+		for arch in $(C_ARCH); do \
+			case  "$${os}/$${arch}" in \
+				"windows/arm" | "solaris/386" | "solaris/arm") true;; \
+				* ) $(ECHO) "   $(C_BLUE)$(I_BULLET)$(C_YELLOW)  $${arch}$(C_STD)"; \
+						GOOS=$${os} GOARCH=$${arch} go build $(LDFLAGS) -o $(PKG)/v$(VERSION)/$${os}/$${arch}/$(PKG_NAME);; esac \
+		done \
+	done
+	@$(ECHO) "$(C_GREEN) All binaries are located at $(C_YELLOW)$(PKG)/v$(VERSION)/$(C_STD)"
+
+# build an image to build Servus with Go and a second image from scratch
+# (microcontainer) to ship it. The build image (and any other without tag) will
+# be deleted.
+build-micro:
+	@$(ECHO) "$(C_GREEN)Building Servus and containerize it in image $(C_YELLOW)$(DOCKER_IMG)$(C_STD)"
+	@docker build \
+		--build-arg PKG_NAME=$(PKG_NAME) \
+		--build-arg PKG_BASE=$(PKG_BASE) \
+		-t $(DOCKER_IMG):micro \
+		-f docker/scratch/Dockerfile .
+	@docker images | grep '<none>' | awk '{print $$3}' | while read i; do docker rmi -f $$i; done
+
+# build an image from Alpine with Servus
+build-alpine:
+	@$(ECHO) "$(C_GREEN)Building Servus for linux/amd64 and containerize it in image $(C_YELLOW)$(DOCKER_IMG)$(C_GREEN) from Alpine$(C_STD)"
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(PKG)/v$(VERSION)/linux/amd64/$(PKG_NAME)
+	@docker build \
+		--build-arg VERSION=$(VERSION) \
+		-t $(DOCKER_IMG):alpine \
+		-f docker/alpine/Dockerfile .
+
 
 # Testing code
 test:
@@ -143,22 +181,12 @@ build4docker: vendor-init test
 		$(ECHO) "$(C_GREEN)$(I_CHECK) Build completed at $(BINARY)$(C_STD)" || \
 		$(ECHO) "$(C_RED)$(I_CROSS) Build failed$(C_STD)"
 
-# build an image to build Servus with Go and a second image to ship it. The
-# build image (and any other without tag) will be deleted.
-image:
-	@$(ECHO) "$(C_GREEN)Building Servus and containerize it in image $(C_YELLOW)$(DOCKER_IMG)$(C_STD)"
-	@docker build \
-		--build-arg PKG_NAME=$(PKG_NAME) \
-		--build-arg PKG_BASE=$(PKG_BASE) \
-		-t $(DOCKER_IMG) .
-	@docker images | grep '<none>' | awk '{print $$3}' | while read i; do docker rmi -f $$i; done
-
 # get Govendor, initialize vendor/vendor.json, get the packages that do not
 # exists in the container and get/copy all the packages to vendor/ and update
 # vendor/vendor.json
 vendor-init:
 	@$(ECHO) "$(C_GREEN)Initializing vendors$(C_STD)"
-	@[[ ! -x $${GOPATH}/bin/govendor ]] && go get -u github.com/kardianos/govendor
+	-@[[ ! -x $${GOPATH}/bin/govendor ]] && go get -u github.com/kardianos/govendor
 	@govendor init
 	@govendor list -no-status +missing | xargs -n1 go get -u
 	@govendor add +external
@@ -188,6 +216,9 @@ sh:
 	@$(ECHO) "$(C_GREEN)Login into the Servus container$(C_STD)"
 	docker run --name $(DOCKER_CON) --rm -it $(DOCKER_IMG) /bin/bash --login
 
+push:
+
+
 # remove the Servus image and every non-tagged image. The build image is a
 # non-tagged image but there may be others not related to this project, so use
 # this rule with careful. Execute 'make ls' before run it.
@@ -216,19 +247,3 @@ ls:
 	@docker ps -a
 	@$(ECHO) "$(C_GREEN)Images:$(C_STD)"
 	@docker images
-
-# build Servus for every OS and Architecture. The binaries are located in
-# $(PKG)/v$(VERSION)
-build-all:
-	@$(ECHO) "$(C_GREEN)Building $(C_YELLOW)v$(VERSION)-$(PRE_RELEASE) ($(GIT_COMMIT)$(GIT_DIRTY))$(C_GREEN) for:$(C_STD)"
-	@for os in $(C_OS); do \
-		$(ECHO) " $(C_BLUE)$(I_BULLET)$(C_GREEN)  $${os}$(C_STD)"; \
-		for arch in $(C_ARCH); do \
-			case  "$${os}/$${arch}" in \
-				"windows/arm" | "solaris/386" | "solaris/arm") true;; \
-				* ) $(ECHO) "   $(C_BLUE)$(I_BULLET)$(C_YELLOW)  $${arch}$(C_STD)"; \
-						GOOS=$${os} GOARCH=$${arch} go build $(LDFLAGS) -o $(PKG)/v$(VERSION)/$${os}/$${arch}/$(PKG_NAME);; \
-			esac \
-		done \
-	done
-	@$(ECHO) "$(C_GREEN) All binaries are located at $(C_YELLOW)$(PKG)/v$(VERSION)/$(C_STD)"

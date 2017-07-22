@@ -1,5 +1,5 @@
 # Build image
-FROM golang:1.8.1 AS build
+FROM golang:1.8.3 AS build
 
 ARG PKG_NAME=servus
 ARG PKG_BASE=github.com/johandry
@@ -18,5 +18,8 @@ RUN echo \
 FROM scratch AS application
 
 COPY --from=build /servus .
+
+EXPOSE 9000
+EXPOSE 7946 7373 8080
 
 CMD [ "./servus" ]

@@ -1,0 +1,42 @@
+version: '2'
+
+services:
+  leader:
+    image: ${SERVUS_IMG_NAME}
+    container_name: ${LEADER_HOSTNAME}
+    hostname: ${LEADER_HOSTNAME}
+    domainname: ${DOMAIN}
+    volumes:
+      - ./data/shared:/root/shared
+    restart: always
+    ports:
+      - ${PORT}
+      - 8080
+      - 7474
+      - 7373
+      - 7946
+    env_file:
+      - ./env/common.env
+      - ./env/leader.env
+    environment:
+      - SERVUS_BIND_ADDRESS=${LEADER_HOSTNAME}:${PORT}
+
+  worker:
+    depends_on:
+      - leader
+    image: ${SERVUS_IMG_NAME}
+    domainname: ${DOMAIN}
+    volumes:
+      - ./data/shared:/root/shared
+    restart: always
+    ports:
+      - ${PORT}
+      - 8080
+      - 7474
+      - 7373
+      - 7946
+    env_file:
+      - ./env/common.env
+      - ./env/worker.env
+    environment:
+      - SERVUS_LEADER_ADDRESS=${LEADER_HOSTNAME}:${PORT}
